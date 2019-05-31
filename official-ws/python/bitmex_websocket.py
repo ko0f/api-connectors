@@ -86,6 +86,10 @@ class BitMEXWebsocket:
         '''Get your margin details.'''
         return self.data['margin'][0]
 
+    def positions(self):
+        '''Get your positions.'''
+        return self.data['position']
+
     def market_depth(self):
         '''Get market depth (orderbook). Returns all levels.'''
         return self.data['orderBookL2']
@@ -93,8 +97,8 @@ class BitMEXWebsocket:
     def open_orders(self, clOrdIDPrefix):
         '''Get all your open orders.'''
         orders = self.data['order']
-        # Filter to only open orders (leavesQty > 0) and those that we actually placed
-        return [o for o in orders if str(o['clOrdID']).startswith(clOrdIDPrefix) and o['leavesQty'] > 0]
+        # Filter to only open orders and those that we actually placed
+        return [o for o in orders if str(o['clOrdID']).startswith(clOrdIDPrefix) and order_leaves_quantity(o)]
 
     def recent_trades(self):
         '''Get recent trades.'''
@@ -136,10 +140,10 @@ class BitMEXWebsocket:
             self.logger.info("Authenticating with API Key.")
             # To auth to the WS using an API key, we generate a signature of a nonce and
             # the WS API endpoint.
-            nonce = generate_nonce()
+            expires = generate_nonce()
             return [
-                "api-nonce: " + str(nonce),
-                "api-signature: " + generate_signature(self.api_secret, 'GET', '/realtime', nonce, ''),
+                "api-expires: " + str(expires),
+                "api-signature: " + generate_signature(self.api_secret, 'GET', '/realtime', expires, ''),
                 "api-key:" + self.api_key
             ]
         else:
@@ -181,7 +185,7 @@ class BitMEXWebsocket:
             args = []
         self.ws.send(json.dumps({"op": command, "args": args}))
 
-    def __on_message(self, ws, message):
+    def __on_message(self, message):
         '''Handler for parsing WS messages.'''
         message = json.loads(message)
         self.logger.debug(json.dumps(message))
@@ -225,7 +229,7 @@ class BitMEXWebsocket:
                             return  # No item found to update. Could happen before push
                         item.update(updateData)
                         # Remove cancelled / filled orders
-                        if table == 'order' and item['leavesQty'] <= 0:
+                        if table == 'order' and not order_leaves_quantity(item):
                             self.data[table].remove(item)
                 elif action == 'delete':
                     self.logger.debug('%s: deleting %s' % (table, message['data']))
@@ -238,17 +242,17 @@ class BitMEXWebsocket:
         except:
             self.logger.error(traceback.format_exc())
 
-    def __on_error(self, ws, error):
+    def __on_error(self, error):
         '''Called on fatal websocket errors. We exit on these.'''
         if not self.exited:
             self.logger.error("Error : %s" % error)
             raise websocket.WebSocketException(error)
 
-    def __on_open(self, ws):
+    def __on_open(self):
         '''Called when the WS opens.'''
         self.logger.debug("Websocket Opened.")
 
-    def __on_close(self, ws):
+    def __on_close(self):
         '''Called on websocket close.'''
         self.logger.info('Websocket Closed')
 
@@ -268,3 +272,9 @@ def findItemByKeys(keys, table, matchData):
                 matched = False
         if matched:
             return item
+
+
+def order_leaves_quantity(o):
+    if o['leavesQty'] is None:
+        return True
+    return o['leavesQty'] > 0
